@@ -17,6 +17,7 @@ function generateArray(table) {
             var rowspan = cell.getAttribute('rowspan');
             var cellValue = cell.innerText;
             if (cellValue !== "" && cellValue == +cellValue) cellValue = +cellValue;
+            
 
             //Skip ranges
             ranges.forEach(function (range) {
