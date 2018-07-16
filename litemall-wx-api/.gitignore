@@ -1,3 +1,7 @@
 
 /target/
 /litemall-wx-api.iml
+.settings/
+.setting/
+*.classpath
+*.project
