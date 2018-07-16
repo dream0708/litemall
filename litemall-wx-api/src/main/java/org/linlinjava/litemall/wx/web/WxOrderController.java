@@ -2,24 +2,24 @@ package org.linlinjava.litemall.wx.web;
 
 import com.github.binarywang.wxpay.bean.notify.WxPayNotifyResponse;
 import com.github.binarywang.wxpay.bean.notify.WxPayOrderNotifyResult;
-import com.github.binarywang.wxpay.bean.order.WxPayAppOrderResult;
 import com.github.binarywang.wxpay.bean.order.WxPayMpOrderResult;
-import com.github.binarywang.wxpay.bean.request.BaseWxPayRequest;
 import com.github.binarywang.wxpay.bean.request.WxPayUnifiedOrderRequest;
 import com.github.binarywang.wxpay.bean.result.BaseWxPayResult;
 import com.github.binarywang.wxpay.service.WxPayService;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.linlinjava.litemall.core.notify.LitemallNotifyService;
+import org.linlinjava.litemall.core.notify.NotifyUtils;
+import org.linlinjava.litemall.core.util.JacksonUtil;
+import org.linlinjava.litemall.core.util.ResponseUtil;
 import org.linlinjava.litemall.db.domain.*;
 import org.linlinjava.litemall.db.service.*;
 import org.linlinjava.litemall.db.util.OrderHandleOption;
 import org.linlinjava.litemall.db.util.OrderUtil;
-import org.linlinjava.litemall.core.util.JacksonUtil;
-import org.linlinjava.litemall.core.util.ResponseUtil;
 import org.linlinjava.litemall.wx.annotation.LoginUser;
+import org.linlinjava.litemall.wx.util.IpUtil;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
@@ -80,6 +80,9 @@ public class WxOrderController {
 
     @Autowired
     private WxPayService wxPayService;
+
+    @Autowired
+    private LitemallNotifyService litemallNotifyService;
 
     public WxOrderController() {
     }
@@ -222,9 +225,9 @@ public class WxOrderController {
             orderGoodsVo.put("goodsId", orderGoods.getGoodsId());
             orderGoodsVo.put("goodsName", orderGoods.getGoodsName());
             orderGoodsVo.put("number", orderGoods.getNumber());
-            orderGoodsVo.put("retailPrice", orderGoods.getRetailPrice());
+            orderGoodsVo.put("retailPrice", orderGoods.getPrice());
             orderGoodsVo.put("picUrl", orderGoods.getPicUrl());
-            orderGoodsVo.put("goodsSpecificationValues", orderGoods.getGoodsSpecificationValues());
+            orderGoodsVo.put("goodsSpecificationValues", orderGoods.getSpecifications());
             orderGoodsVoList.add(orderGoodsVo);
         }
 
@@ -284,7 +287,7 @@ public class WxOrderController {
         }
         BigDecimal checkedGoodsPrice = new BigDecimal(0.00);
         for (LitemallCart checkGoods : checkedGoodsList) {
-            checkedGoodsPrice = checkedGoodsPrice.add(checkGoods.getRetailPrice().multiply(new BigDecimal(checkGoods.getNumber())));
+            checkedGoodsPrice = checkedGoodsPrice.add(checkGoods.getPrice().multiply(new BigDecimal(checkGoods.getNumber())));
         }
 
         // 根据订单商品总价计算运费，满88则免运费，否则8元；
@@ -337,10 +340,9 @@ public class WxOrderController {
                 orderGoods.setProductId(cartGoods.getProductId());
                 orderGoods.setGoodsName(cartGoods.getGoodsName());
                 orderGoods.setPicUrl(cartGoods.getPicUrl());
-                orderGoods.setRetailPrice(cartGoods.getRetailPrice());
+                orderGoods.setPrice(cartGoods.getPrice());
                 orderGoods.setNumber(cartGoods.getNumber());
-                orderGoods.setGoodsSpecificationIds(cartGoods.getGoodsSpecificationIds());
-                orderGoods.setGoodsSpecificationValues(cartGoods.getGoodsSpecificationValues());
+                orderGoods.setSpecifications(cartGoods.getSpecifications());
                 orderGoods.setAddTime(LocalDateTime.now());
 
                 // 添加订单商品表项
@@ -355,11 +357,11 @@ public class WxOrderController {
                 Integer productId = checkGoods.getProductId();
                 LitemallProduct product = productService.findById(productId);
 
-                Integer remainNumber = product.getGoodsNumber() - checkGoods.getNumber();
+                Integer remainNumber = product.getNumber() - checkGoods.getNumber();
                 if (remainNumber < 0) {
                     throw new RuntimeException("下单的商品货品数量大于库存量");
                 }
-                product.setGoodsNumber(remainNumber);
+                product.setNumber(remainNumber);
                 productService.updateById(product);
             }
         } catch (Exception ex) {
@@ -425,8 +427,8 @@ public class WxOrderController {
             for (LitemallOrderGoods orderGoods : orderGoodsList) {
                 Integer productId = orderGoods.getProductId();
                 LitemallProduct product = productService.findById(productId);
-                Integer number = product.getGoodsNumber() + orderGoods.getNumber();
-                product.setGoodsNumber(number);
+                Integer number = product.getNumber() + orderGoods.getNumber();
+                product.setNumber(number);
                 productService.updateById(product);
             }
         } catch (Exception ex) {
@@ -441,7 +443,7 @@ public class WxOrderController {
 
     /**
      * 付款订单的预支付会话标识
-     *
+     * <p>
      * 1. 检测当前订单是否能够付款
      * 2. 微信支付平台返回支付订单ID
      * 3. 设置订单付款状态
@@ -453,8 +455,8 @@ public class WxOrderController {
      * 失败则 { errno: XXX, errmsg: XXX }
      */
     @PostMapping("prepay")
-    public Object prepay(@LoginUser Integer userId, @RequestBody String body) {
-        if(userId == null){
+    public Object prepay(@LoginUser Integer userId, @RequestBody String body, HttpServletRequest request) {
+        if (userId == null) {
             return ResponseUtil.unlogin();
         }
         Integer orderId = JacksonUtil.parseInteger(body, "orderId");
@@ -478,7 +480,7 @@ public class WxOrderController {
 
         LitemallUser user = userService.findById(userId);
         String openid = user.getWeixinOpenid();
-        if(openid == null){
+        if (openid == null) {
             return ResponseUtil.fail(403, "订单不能支付");
         }
         WxPayMpOrderResult result = null;
@@ -486,17 +488,13 @@ public class WxOrderController {
             WxPayUnifiedOrderRequest orderRequest = new WxPayUnifiedOrderRequest();
             orderRequest.setOutTradeNo(order.getOrderSn());
             orderRequest.setOpenid(openid);
-            // TODO 更有意义的显示名称
-            orderRequest.setBody("litemall小商场-订单测试支付");
+            orderRequest.setBody("订单：" + order.getOrderSn());
             // 元转成分
-            Integer fee = 1;
-            // 这里演示仅支付1分
-            // 实际项目取消下面两行注释
-            // BigDecimal actualPrice = order.getActualPrice();
-            // fee = actualPrice.multiply(new BigDecimal(100)).intValue();
+            Integer fee = 0;
+            BigDecimal actualPrice = order.getActualPrice();
+            fee = actualPrice.multiply(new BigDecimal(100)).intValue();
             orderRequest.setTotalFee(fee);
-            // TODO 用户IP地址
-            orderRequest.setSpbillCreateIp("123.12.12.123");
+            orderRequest.setSpbillCreateIp(IpUtil.getIpAddr(request));
 
             result = wxPayService.createOrder(orderRequest);
         } catch (Exception e) {
@@ -519,7 +517,7 @@ public class WxOrderController {
      * @return 订单操作结果
      * 成功则 WxPayNotifyResponse.success的XML内容
      * 失败则 WxPayNotifyResponse.fail的XML内容
-     *
+     * <p>
      * 注意，这里pay-notify是示例地址，开发者应该设立一个隐蔽的回调地址
      */
     @PostMapping("pay-notify")
@@ -534,19 +532,18 @@ public class WxOrderController {
             String totalFee = BaseWxPayResult.feeToYuan(result.getTotalFee());
 
             LitemallOrder order = orderService.findBySn(orderSn);
-            if(order == null){
+            if (order == null) {
                 throw new Exception("订单不存在 sn=" + orderSn);
             }
 
             // 检查这个订单是否已经处理过
-            if(OrderUtil.isPayStatus(order) && order.getPayId() != null){
+            if (OrderUtil.isPayStatus(order) && order.getPayId() != null) {
                 return WxPayNotifyResponse.success("处理成功!");
             }
 
             // 检查支付订单金额
-            // TODO 这里1分钱需要改成实际订单金额
-            if(!totalFee.equals("0.01")){
-                throw new Exception("支付金额不符合 totalFee=" + totalFee);
+            if (!totalFee.equals(order.getActualPrice().toString())) {
+                throw new Exception(order.getOrderSn() + " : 支付金额不符合 totalFee=" + totalFee);
             }
 
             order.setPayId(payId);
@@ -554,13 +551,17 @@ public class WxOrderController {
             order.setOrderStatus(OrderUtil.STATUS_PAY);
             orderService.updateById(order);
 
+            //TODO 发送邮件和短信通知，这里采用异步发送
+            // 订单支付成功以后，会发送短信给用户，以及发送邮件给管理员
+            litemallNotifyService.notifyMailMessage("新订单通知", order.toString());
+            litemallNotifyService.notifySMSTemplate(order.getMobile(), NotifyUtils.NotifyType.PAY_SUCCEED, new String[]{orderSn});
+
             return WxPayNotifyResponse.success("处理成功!");
         } catch (Exception e) {
             logger.error("微信回调结果异常,异常原因 " + e.getMessage());
             return WxPayNotifyResponse.fail(e.getMessage());
         }
     }
-
 
     /**
      * 订单申请退款
@@ -715,5 +716,4 @@ public class WxOrderController {
         LitemallOrderGoods orderGoods = orderGoodsList.get(0);
         return ResponseUtil.ok(orderGoods);
     }
-
 }

@@ -4,10 +4,13 @@ import com.github.pagehelper.PageHelper;
 import org.linlinjava.litemall.db.dao.LitemallUserMapper;
 import org.linlinjava.litemall.db.domain.LitemallUser;
 import org.linlinjava.litemall.db.domain.LitemallUserExample;
+import org.linlinjava.litemall.db.domain.UserVo;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import javax.annotation.Resource;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class LitemallUserService {
@@ -16,6 +19,14 @@ public class LitemallUserService {
 
     public LitemallUser findById(Integer userId) {
         return userMapper.selectByPrimaryKey(userId);
+    }
+
+    public UserVo findUserVoById(Integer userId) {
+        LitemallUser user = findById(userId);
+        UserVo userVo = new UserVo();
+        userVo.setNickname(user.getNickname());
+        userVo.setAvatar(user.getAvatar());
+        return userVo;
     }
 
     public LitemallUser queryByOid(String openId) {
@@ -43,6 +54,10 @@ public class LitemallUserService {
             criteria.andMobileEqualTo(mobile);
         }
         criteria.andDeletedEqualTo(false);
+
+        if (!StringUtils.isEmpty(sort) && !StringUtils.isEmpty(order)) {
+            example.setOrderByClause(sort + " " + order);
+        }
 
         PageHelper.startPage(page, size);
         return userMapper.selectByExample(example);
