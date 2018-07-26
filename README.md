@@ -158,6 +158,6 @@ V 3.0.0 完成以下目标：
 
 ## 相关项目
 
-[HubertYoung](https://github.com/HubertYoung)正在开发Android端[Litemall-Android](https://github.com/HubertYoung/Litemall-Android)
+[hy](https://github.com/HubertYoung)正在开发Android端[Litemall-Android](https://github.com/HubertYoung/Litemall-Android)
 
-#update 2018-07-16
+#update 2018-07-26
